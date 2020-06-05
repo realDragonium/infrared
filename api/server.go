@@ -48,6 +48,10 @@ func ginRouter(cfg Config) (http.Handler, error) {
 
 		v1 := api.Group("/v1", jwtAuthenticator(publicKey))
 		{
+			// Register
+			v1.GET("/register", registerTokenEndpoint(privateKey))
+			v1.POST("/register", registerEndpoint(dataService))
+
 			// User
 			v1.GET("/user", userEndpoint(dataService))
 			v1.GET("/users", usersEndpoint(dataService))
