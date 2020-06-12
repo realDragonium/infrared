@@ -2,6 +2,9 @@ package infrared
 
 import (
 	"github.com/haveachin/infrared/callback"
+	pk "github.com/haveachin/infrared/mc/packet"
+	"github.com/haveachin/infrared/mots"
+	"github.com/haveachin/infrared/safe"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"io"
@@ -15,56 +18,18 @@ import (
 	"github.com/haveachin/infrared/process"
 )
 
-type playerMap struct {
-	sync.RWMutex
-	players map[*mc.Conn]string
-}
-
-func (p *playerMap) put(key *mc.Conn, value string) {
-	p.Lock()
-	defer p.Unlock()
-	p.players[key] = value
-}
-
-func (p *playerMap) remove(key *mc.Conn) {
-	p.Lock()
-	defer p.Unlock()
-	delete(p.players, key)
-}
-
-func (p *playerMap) length() int {
-	p.RLock()
-	defer p.RUnlock()
-	return len(p.players)
-}
-
-func (p *playerMap) keys() []*mc.Conn {
-	p.RLock()
-	defer p.RUnlock()
-
-	var conns []*mc.Conn
-
-	for conn := range p.players {
-		conns = append(conns, conn)
-	}
-
-	return conns
-}
-
 // Proxy is a TCP server that takes an incoming request and sends it to another
 // server, proxying the response back to the client.
 type Proxy struct {
-	// ClientBoundModifiers modify traffic that is send from the server to the client
-	ClientBoundModifiers []Modifier
-	// ServerBoundModifiers modify traffic that is send from the client to the server
-	ServerBoundModifiers []Modifier
+	// Modifier modifies traffic that is send between the client and the server
+	Modifier []mots.InterceptFunc
 
 	domainName    string
 	listenTo      string
 	proxyTo       string
 	timeout       time.Duration
 	cancelTimeout func()
-	players       playerMap
+	Players       safe.Players
 
 	server    sim.Server
 	process   process.Process
@@ -79,12 +44,11 @@ func NewProxy(cfg ProxyConfig) (*Proxy, error) {
 	logWriter := &callback.LogWriter{}
 
 	proxy := Proxy{
-		ClientBoundModifiers: []Modifier{},
-		ServerBoundModifiers: []Modifier{},
-		players:              playerMap{players: map[*mc.Conn]string{}},
-		cancelTimeout:        nil,
-		logWriter:            logWriter,
-		loggerOutputs:        []io.Writer{logWriter},
+		Modifier:      []mots.InterceptFunc{},
+		Players:       *safe.NewPlayers(),
+		cancelTimeout: nil,
+		logWriter:     logWriter,
+		loggerOutputs: []io.Writer{logWriter},
 	}
 
 	if err := proxy.updateConfig(cfg); err != nil {
@@ -115,6 +79,7 @@ func (proxy *Proxy) overrideLogger(logger zerolog.Logger) zerolog.Logger {
 func (proxy *Proxy) HandleConn(conn mc.Conn) error {
 	connAddr := conn.RemoteAddr().String()
 	logger := proxy.logger.With().Str("connection", connAddr).Logger()
+	state := safe.State{Value: protocol.StateHandshaking}
 
 	packet, err := conn.PeekPacket()
 	if err != nil {
@@ -155,59 +120,107 @@ func (proxy *Proxy) HandleConn(conn mc.Conn) error {
 	}
 
 	if handshake.IsLoginRequest() {
-		username, err := sniffUsername(conn, rconn)
+		state.Value = protocol.StateLogin
+
+		username, err := proxy.server.SniffUsername(conn, rconn)
 		if err != nil {
 			return err
 		}
 
 		proxy.stopTimeout()
-		proxy.players.put(&conn, username)
+		proxy.Players.Put(&conn, username)
 		logger = logger.With().Str("username", username).Logger()
 		logger.Info().Interface(callback.EventKey, callback.PlayerJoinEvent).Msgf("%s joined the game", username)
 
 		defer func() {
 			logger.Info().Interface(callback.EventKey, callback.PlayerLeaveEvent).Msgf("%s left the game", username)
-			proxy.players.remove(&conn)
+			proxy.Players.Remove(&conn)
 
-			if proxy.players.length() <= 0 {
+			if proxy.Players.Length() <= 0 {
 				proxy.startTimeout()
 			}
 		}()
+
+		if err := proxy.server.SetEncryption(&conn); err != nil {
+			return err
+		}
+
+		logger.Debug().Msg("Encryption successful")
+
+		//threshold := 256
+		/*threshold, err := proxy.server.SetThreshold(&conn, &rconn)
+		if err != nil {
+			return err
+		}
+
+		logger.Debug().Msgf("Threshold set to %d", threshold)*/
+
+		state.Value = protocol.StatePlay
 	}
 
 	wg := sync.WaitGroup{}
 
-	var pipe = func(src, dst mc.Conn, modifiers []Modifier) {
+	var pipe = func(src, dst *mc.Conn, modifiers ...mots.InterceptFunc) {
 		defer wg.Done()
 
-		buffer := make([]byte, 0xffff)
+		modifiers = append(modifiers, proxy.Modifier...)
+
+		author := mots.AuthorClient
+		if *src == rconn {
+			author = mots.AuthorServer
+		}
+
+		//buf := make([]byte, 0xffff)
+		buffer := safe.NewBuffer([]byte{})
+
+		go func() {
+			for {
+				packet, err := pk.Read(buffer, src.Threshold >= 0)
+				if err != nil {
+					return
+				}
+
+				msg := mots.Message{
+					State:  state.Read(),
+					Packet: packet,
+					Author: author,
+					Dst:    dst,
+				}
+
+				for _, modifier := range modifiers {
+					if modifier == nil {
+						continue
+					}
+
+					modifier(&msg)
+				}
+			}
+		}()
 
 		for {
-			n, err := src.Read(buffer)
+			packet, err := src.ReadPacket()
 			if err != nil {
 				return
 			}
 
-			data := buffer[:n]
+			/*data := make([]byte, n)
+			copy(data, buf[:n])
+			go buffer.Write(data)*/
 
-			for _, modifier := range modifiers {
-				if modifier == nil {
-					continue
-				}
-
-				modifier.Modify(src, dst, &data)
-			}
-
-			_, err = dst.Conn.Write(data)
-			if err != nil {
+			if err := dst.WritePacket(packet); err != nil {
 				return
 			}
 		}
 	}
 
+	var modifiers = []mots.InterceptFunc{
+		//mitm.OmnidirectionalLogger,
+		//mitm.BidirectionalStateUpdate(&state),
+	}
+
 	wg.Add(2)
-	go pipe(conn, rconn, proxy.ClientBoundModifiers)
-	go pipe(rconn, conn, proxy.ServerBoundModifiers)
+	go pipe(&conn, &rconn, modifiers...)
+	go pipe(&rconn, &conn, modifiers...)
 	wg.Wait()
 
 	conn.Close()
@@ -237,7 +250,8 @@ func (proxy *Proxy) updateConfig(cfg ProxyConfig) error {
 		return err
 	}
 
-	if err := proxy.server.UpdateConfig(cfg.Server); err != nil {
+	server, err := sim.NewServer(cfg.Server)
+	if err != nil {
 		return err
 	}
 
@@ -254,6 +268,7 @@ func (proxy *Proxy) updateConfig(cfg ProxyConfig) error {
 	proxy.proxyTo = cfg.ProxyTo
 	proxy.timeout = timeout
 	proxy.process = proc
+	proxy.server = *server
 
 	return nil
 }
@@ -288,38 +303,9 @@ func (proxy *Proxy) stopTimeout() {
 }
 
 func (proxy *Proxy) Close() {
-	for _, conn := range proxy.players.keys() {
+	for _, conn := range proxy.Players.Keys() {
 		if err := conn.Close(); err != nil {
 			proxy.logger.Err(err)
 		}
 	}
-}
-
-func sniffUsername(conn, rconn mc.Conn) (string, error) {
-	// Handshake
-	packet, err := conn.ReadPacket()
-	if err != nil {
-		return "", err
-	}
-
-	if err := rconn.WritePacket(packet); err != nil {
-		return "", err
-	}
-
-	// Login
-	packet, err = conn.ReadPacket()
-	if err != nil {
-		return "", err
-	}
-
-	loginStartPacket, err := protocol.ParseClientLoginStart(packet)
-	if err != nil {
-		return "", err
-	}
-
-	if err := rconn.WritePacket(packet); err != nil {
-		return "", err
-	}
-
-	return string(loginStartPacket.Name), nil
 }
