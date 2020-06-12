@@ -19,7 +19,7 @@ type Conn struct {
 
 	r         *bufio.Reader
 	w         io.Writer
-	threshold int
+	Threshold int
 }
 
 //Listen listen as TCP but Accept a mc Conn
@@ -69,7 +69,7 @@ func WrapConn(conn net.Conn) Conn {
 		Conn:      conn,
 		r:         bufio.NewReader(conn),
 		w:         conn,
-		threshold: 0,
+		Threshold: -1,
 	}
 }
 
@@ -83,17 +83,17 @@ func (c *Conn) Write(b []byte) (int, error) {
 
 // ReadPacket read a Packet from Conn.
 func (c *Conn) ReadPacket() (pk.Packet, error) {
-	return pk.Read(c.r, c.threshold > 0)
+	return pk.Read(c.r, c.Threshold >= 0)
 }
 
 // PeekPacket peeks a Packet from Conn.
 func (c *Conn) PeekPacket() (pk.Packet, error) {
-	return pk.Peek(c.r, c.threshold > 0)
+	return pk.Peek(c.r, c.Threshold >= 0)
 }
 
 //WritePacket write a Packet to Conn.
 func (c *Conn) WritePacket(p pk.Packet) error {
-	_, err := c.w.Write(p.Pack(c.threshold))
+	_, err := c.w.Write(p.Pack(c.Threshold))
 	return err
 }
 
@@ -107,11 +107,4 @@ func (c *Conn) SetCipher(ecoStream, decoStream cipher.Stream) {
 		S: ecoStream,
 		W: c.Conn,
 	}
-}
-
-// SetThreshold set threshold to Conn.
-// The data packet with length longer then threshold
-// will be compress when sending.
-func (c *Conn) SetThreshold(t int) {
-	c.threshold = t
 }
