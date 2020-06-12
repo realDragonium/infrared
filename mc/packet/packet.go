@@ -2,8 +2,8 @@ package packet
 
 import (
 	"bytes"
-	"compress/zlib"
 	"fmt"
+	"github.com/klauspost/compress/zlib"
 	"io"
 )
 
@@ -11,6 +11,13 @@ import (
 type Packet struct {
 	ID   byte
 	Data []byte
+}
+
+func Parse(b []byte) Packet {
+	return Packet{
+		ID:   b[0],
+		Data: b[1:],
+	}
 }
 
 //Marshal generate Packet with the ID and Fields
@@ -42,7 +49,7 @@ func (p *Packet) Pack(threshold int) []byte {
 	data := []byte{p.ID}
 	data = append(data, p.Data...)
 
-	if threshold > 0 {
+	if threshold >= 0 {
 		if len(data) > threshold {
 			length := VarInt(len(data)).Encode()
 			data = Compress(data)
@@ -60,48 +67,42 @@ func (p *Packet) Pack(threshold int) []byte {
 	return append(packedData, data...)
 }
 
+func ReadRaw(r DecodeReader) ([]byte, error) {
+	var packetLength VarInt
+	if err := packetLength.Decode(r); err != nil {
+		return nil, err
+	}
+
+	if packetLength < 1 {
+		return nil, fmt.Errorf("packet length too short")
+	}
+
+	data := make([]byte, packetLength)
+	if _, err := io.ReadFull(r, data); err != nil {
+		return nil, fmt.Errorf("read content of packet fail: %v", err)
+	}
+
+	return data, nil
+}
+
 // RecvPacket receive a packet from server
-func Read(r io.ByteReader, zlib bool) (Packet, error) {
-	var length int
-	for i := 0; i < 5; i++ {
-		b, err := r.ReadByte()
-		if err != nil {
-			return Packet{}, fmt.Errorf("read length of packet fail: %v", err)
-		}
-
-		length |= int(b&0x7F) << uint(7*i)
-		if b&0x80 == 0 {
-			break
-		}
-	}
-
-	if length < 1 {
-		return Packet{}, fmt.Errorf("packet length too short")
-	}
-
-	data := make([]byte, length)
-	var err error
-	for i := 0; i < length; i++ {
-		data[i], err = r.ReadByte()
-		if err != nil {
-			return Packet{}, fmt.Errorf("read content of packet fail: %v", err)
-		}
+func Read(r DecodeReader, zlib bool) (Packet, error) {
+	data, err := ReadRaw(r)
+	if err != nil {
+		return Packet{}, err
 	}
 
 	if zlib {
 		return Decompress(data)
 	}
 
-	return Packet{
-		ID:   data[0],
-		Data: data[1:],
-	}, nil
+	return Parse(data), nil
 }
 
-func Peek(p Peeker, zlib bool) (Packet, error) {
+func Peek(p PeekReader, zlib bool) (Packet, error) {
 	r := bytePeeker{
-		Peeker: p,
-		cursor: 0,
+		PeekReader: p,
+		cursor:     0,
 	}
 
 	return Read(&r, zlib)
@@ -111,15 +112,14 @@ func Peek(p Peeker, zlib bool) (Packet, error) {
 func Decompress(data []byte) (Packet, error) {
 	reader := bytes.NewReader(data)
 
-	var sizeUncompressed VarInt
-	if err := sizeUncompressed.Decode(reader); err != nil {
+	var dataLength VarInt
+	if err := dataLength.Decode(reader); err != nil {
 		return Packet{}, err
 	}
 
-	decompressedData := make([]byte, sizeUncompressed)
-	if sizeUncompressed != 0 { // != 0 means compressed, let's decompress
+	decompressedData := make([]byte, dataLength)
+	if dataLength != 0 { // != 0 means compressed, let's decompress
 		r, err := zlib.NewReader(reader)
-
 		if err != nil {
 			return Packet{}, fmt.Errorf("decompress fail: %v", err)
 		}
@@ -127,20 +127,20 @@ func Decompress(data []byte) (Packet, error) {
 		if err != nil {
 			return Packet{}, fmt.Errorf("decompress fail: %v", err)
 		}
-		r.Close()
+		if err := r.Close(); err != nil {
+			return Packet{}, err
+		}
 	} else {
 		decompressedData = data[1:]
 	}
-	return Packet{
-		ID:   decompressedData[0],
-		Data: decompressedData[1:],
-	}, nil
+
+	return Parse(decompressedData), nil
 }
 
 // Compress 压缩数据
 func Compress(data []byte) []byte {
 	var b bytes.Buffer
-	w := zlib.NewWriter(&b)
+	w, _ := zlib.NewWriterLevel(&b, zlib.BestSpeed)
 	w.Write(data)
 	w.Close()
 	return b.Bytes()
