@@ -1,12 +1,30 @@
 package packet
 
-type Peeker interface {
+import "io"
+
+type PeekReader interface {
 	Peek(n int) ([]byte, error)
+	io.Reader
 }
 
 type bytePeeker struct {
-	Peeker
+	PeekReader
 	cursor int
+}
+
+func (p *bytePeeker) Read(b []byte) (int, error) {
+	buf, err := p.Peek(len(b) + p.cursor)
+	if err != nil {
+		return 0, err
+	}
+
+	for i := 0; i < len(b); i++ {
+		b[i] = buf[i+p.cursor]
+	}
+
+	p.cursor += len(b)
+
+	return len(buf), nil
 }
 
 func (p *bytePeeker) ReadByte() (byte, error) {
