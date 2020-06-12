@@ -10,9 +10,8 @@ Infrared works as a reverse proxy using a subdomains to connect clients to a spe
 - [x] Reverse Proxy
 - [x] Display Placeholder Server
 - [x] Autostart Server when pinged
-- [x] Logger Callback URLs
-- [ ] JSON Endpoint for logs
-- [ ] gRPC API for live data
+- [x] Logger/Event Callback URLs
+- [ ] REST API with JSON as data format
 
 ## Deploy
 
@@ -56,6 +55,8 @@ Infrared handles configs similar to Nginx.
 Every proxy has its own config file that has to end in `.yml` or `.yaml`.
 All config options are below, but only the marked* fields are essential for a valid config file.
 
+### Proxy Config
+
 `DomainName`* is a [fully qualified domain name](https://en.wikipedia.org/wiki/Domain_name)  
 `ListenTo` is the address that the proxy listen to for incoming connections [default: `":25565"`]  
 `ProxyTo`* is the address that the proxy sends the incoming connections to  
@@ -95,7 +96,7 @@ from a vanilla Minecraft server
   - `ContainerStop` will send container stops
   - `ContainerTimeout` will send container timeout start (when the last player leaves the server)
 
-## Example Config for a Vanilla Server
+#### Example Config for a Vanilla Server
 
 `mc.example.com.yml`
 
