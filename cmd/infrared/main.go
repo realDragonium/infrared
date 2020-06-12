@@ -3,8 +3,10 @@ package main
 import (
 	"flag"
 	"github.com/haveachin/infrared"
+	"github.com/haveachin/infrared/cmd/infrared/command"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+	"io"
 	"os"
 	"strconv"
 	"time"
@@ -83,15 +85,19 @@ func main() {
 	}
 
 	log.Logger = log.Output(defaultConsoleWriter)
+	_ = startGateway(defaultConsoleWriter)
+	command.Read(os.Stdin)
+}
 
+func startGateway(out io.Writer) *infrared.Gateway {
 	vprs, err := infrared.ReadAllProxyConfigs(configPath)
 	if err != nil {
-		log.Info().Err(err)
-		return
+		log.Fatal().Err(err)
+		return nil
 	}
 
 	gateway := infrared.NewGateway()
-	gateway.AddLoggerOutput(defaultConsoleWriter)
+	gateway.AddLoggerOutput(out)
 
 	for _, vpr := range vprs {
 		if _, err := gateway.AddProxyByViper(vpr); err != nil {
@@ -99,7 +105,11 @@ func main() {
 		}
 	}
 
-	if err := gateway.ListenAndServe(); err != nil {
-		log.Err(err)
-	}
+	go func() {
+		if err := gateway.ListenAndServe(); err != nil {
+			log.Fatal().Err(err)
+		}
+	}()
+
+	return &gateway
 }
