@@ -1,7 +1,14 @@
 package sim
 
 import (
+	"bytes"
+	"crypto/aes"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"errors"
 	"fmt"
+	"github.com/haveachin/infrared/mc/cfb8"
 	"strings"
 
 	"github.com/haveachin/infrared/mc"
@@ -9,13 +16,35 @@ import (
 	"github.com/haveachin/infrared/mc/protocol"
 )
 
+const (
+	keyBitSize        = 1024
+	verifyTokenLength = 4
+)
+
 type Server struct {
+	privateKey *rsa.PrivateKey
+	publicKey  []byte
+
 	disconnectMessage string
-	serverInfoPacket pk.Packet
+	serverInfoPacket  pk.Packet
 }
 
-func New(cfg ServerConfig) (*Server, error) {
-	server := &Server{}
+func NewServer(cfg ServerConfig) (*Server, error) {
+	key, err := rsa.GenerateKey(rand.Reader, keyBitSize)
+	if err != nil {
+		return nil, err
+	}
+
+	publicKey, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	if err != nil {
+		return nil, err
+	}
+
+	server := &Server{
+		privateKey: key,
+		publicKey:  publicKey,
+	}
+
 	return server, server.UpdateConfig(cfg)
 }
 
@@ -31,15 +60,15 @@ func (server Server) HandleConn(conn mc.Conn) error {
 	}
 
 	if handshake.IsStatusRequest() {
-		return server.respondToSLPStatus(conn)
+		return server.respondToStatusRequest(conn)
 	} else if handshake.IsLoginRequest() {
-		return server.respondToSLPLogin(conn)
+		return server.respondToLoginRequest(conn)
 	}
 
 	return nil
 }
 
-func (server Server) respondToSLPStatus(conn mc.Conn) error {
+func (server Server) respondToStatusRequest(conn mc.Conn) error {
 	packet, err := conn.ReadPacket()
 	if err != nil {
 		return err
@@ -65,7 +94,7 @@ func (server Server) respondToSLPStatus(conn mc.Conn) error {
 	return conn.WritePacket(packet)
 }
 
-func (server Server) respondToSLPLogin(conn mc.Conn) error {
+func (server Server) respondToLoginRequest(conn mc.Conn) error {
 	packet, err := conn.ReadPacket()
 	if err != nil {
 		return err
@@ -79,11 +108,167 @@ func (server Server) respondToSLPLogin(conn mc.Conn) error {
 	message := strings.Replace(server.disconnectMessage, "$username", string(loginStart.Name), -1)
 	message = fmt.Sprintf("{\"text\":\"%s\"}", message)
 
-	disconnect := protocol.LoginDisconnect{
+	disconnect := protocol.ServerLoginDisconnect{
 		Reason: pk.Chat(message),
 	}
 
 	return conn.WritePacket(disconnect.Marshal())
+}
+
+func (server *Server) SniffUsername(conn, rconn mc.Conn) (string, error) {
+	// Handshake
+	packet, err := conn.ReadPacket()
+	if err != nil {
+		return "", err
+	}
+
+	if err := rconn.WritePacket(packet); err != nil {
+		return "", err
+	}
+
+	// Login
+	packet, err = conn.ReadPacket()
+	if err != nil {
+		return "", err
+	}
+
+	loginStartPacket, err := protocol.ParseClientLoginStart(packet)
+	if err != nil {
+		return "", err
+	}
+
+	if err := rconn.WritePacket(packet); err != nil {
+		return "", err
+	}
+
+	return string(loginStartPacket.Name), nil
+}
+
+func (server *Server) SetEncryption(conn *mc.Conn) error {
+	verifyToken := make([]byte, verifyTokenLength)
+	if _, err := rand.Read(verifyToken); err != nil {
+		return err
+	}
+
+	var encryptionRequest = protocol.ServerLoginEncryptionRequest{
+		ServerID:    pk.String(""),
+		PublicKey:   pk.ByteArray(server.publicKey),
+		VerifyToken: pk.ByteArray(verifyToken),
+	}
+
+	if err := conn.WritePacket(encryptionRequest.Marshal()); err != nil {
+		return err
+	}
+
+	packet, err := conn.ReadPacket()
+	if err != nil {
+		return err
+	}
+
+	encryptionResponse, err := protocol.ParseClientLoginEncryptionResponse(packet)
+	if err != nil {
+		return err
+	}
+
+	respVerifyToken, err := server.privateKey.Decrypt(rand.Reader, encryptionResponse.VerifyToken, nil)
+	if err != nil {
+		return err
+	}
+
+	if bytes.Compare(verifyToken, respVerifyToken) != 0 {
+		return errors.New("verify token did not match")
+	}
+
+	sharedSecret, err := server.privateKey.Decrypt(rand.Reader, encryptionResponse.SharedSecret, nil)
+	if err != nil {
+		return err
+	}
+
+	block, err := aes.NewCipher(sharedSecret)
+	if err != nil {
+		return err
+	}
+
+	conn.SetCipher(
+		cfb8.NewCFB8Encrypter(block, sharedSecret),
+		cfb8.NewCFB8Decrypter(block, sharedSecret),
+	)
+
+	return nil
+}
+
+func (server *Server) SetCustomThreshold(conn, rconn *mc.Conn, threshold int) error {
+	setClientThreshold := func() error {
+		if err := conn.WritePacket(protocol.ServerLoginSetCompression{
+			Threshold: pk.VarInt(threshold),
+		}.Marshal()); err != nil {
+			return err
+		}
+		conn.Threshold = threshold
+		return nil
+	}
+
+	packet, err := rconn.ReadPacket()
+	if err != nil {
+		return err
+	}
+
+	switch packet.ID {
+	case protocol.ServerLoginLoginSuccessPacketID:
+		if err := setClientThreshold(); err != nil {
+			return err
+		}
+		return conn.WritePacket(packet)
+	case protocol.ServerLoginSetCompressionPacketID:
+		setCompression, err := protocol.ParseServerLoginSetCompression(packet)
+		if err != nil {
+			return err
+		}
+		rconn.Threshold = int(setCompression.Threshold)
+		if err := setClientThreshold(); err != nil {
+			return err
+		}
+		// Send LoginSuccess
+		packet, err = rconn.ReadPacket()
+		if err != nil {
+			return err
+		}
+		return conn.WritePacket(packet)
+	default:
+		return protocol.ErrInvalidPacketID
+	}
+}
+
+func (server *Server) SetThreshold(conn, rconn *mc.Conn) (int, error) {
+	threshold := -1
+	packet, err := rconn.ReadPacket()
+	if err != nil {
+		return threshold, err
+	}
+
+	switch packet.ID {
+	case protocol.ServerLoginLoginSuccessPacketID:
+		return threshold, conn.WritePacket(packet)
+	case protocol.ServerLoginSetCompressionPacketID:
+		setCompression, err := protocol.ParseServerLoginSetCompression(packet)
+		if err != nil {
+			return threshold, err
+		}
+		threshold = int(setCompression.Threshold)
+		rconn.Threshold = threshold
+		if err := conn.WritePacket(packet); err != nil {
+			return threshold, err
+		}
+		conn.Threshold = threshold
+		// Send LoginSuccess
+		packet, err = rconn.ReadPacket()
+		if err != nil {
+			return threshold, err
+		}
+		return threshold, conn.WritePacket(packet)
+	default:
+		return threshold, protocol.ErrInvalidPacketID
+	}
 }
 
 func (server *Server) UpdateConfig(cfg ServerConfig) error {
@@ -100,4 +285,3 @@ func (server *Server) UpdateConfig(cfg ServerConfig) error {
 
 	return nil
 }
-
