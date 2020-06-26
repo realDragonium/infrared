@@ -18,7 +18,7 @@ type ProxyConfig struct {
 	ListenTo    string
 	ProxyTo     string
 	Timeout     string
-	Docker      process.Config
+	Process     process.Config
 	Server      sim.ServerConfig
 	CallbackLog callback.Config
 }
