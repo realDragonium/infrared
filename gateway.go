@@ -123,12 +123,12 @@ func (gateway *Gateway) AddProxyByViper(vpr *viper.Viper) (*Proxy, error) {
 }
 
 func (gateway *Gateway) AddProxy(proxy *Proxy) error {
-	gate, ok := gateway.gates[proxy.listenTo]
+	gate, ok := gateway.gates[proxy.listenTo.Read()]
 	if ok {
 		return gate.AddProxy(proxy)
 	}
 
-	gate, err := NewGate(proxy.listenTo)
+	gate, err := NewGate(proxy.listenTo.Read())
 	if err != nil {
 		return err
 	}
@@ -211,8 +211,8 @@ func (gateway *Gateway) onConfigChange(proxy *Proxy, vpr *viper.Viper) func(fsno
 }
 
 func (gateway *Gateway) UpdateProxy(proxy *Proxy, cfg ProxyConfig) error {
-	if cfg.ListenTo == proxy.listenTo {
-		gate, ok := gateway.gates[proxy.listenTo]
+	if cfg.ListenTo == proxy.listenTo.Read() {
+		gate, ok := gateway.gates[proxy.listenTo.Read()]
 		if !ok {
 			return ErrGateDoesNotExist
 		}
@@ -222,8 +222,8 @@ func (gateway *Gateway) UpdateProxy(proxy *Proxy, cfg ProxyConfig) error {
 
 	gate, ok := gateway.gates[cfg.ListenTo]
 	if !ok {
-		oldAddr := proxy.listenTo
-		oldDomainName := proxy.domainName
+		oldAddr := proxy.listenTo.Read()
+		oldDomainName := proxy.domainName.Read()
 
 		if err := proxy.updateConfig(cfg); err != nil {
 			return err
@@ -237,6 +237,8 @@ func (gateway *Gateway) UpdateProxy(proxy *Proxy, cfg ProxyConfig) error {
 		return nil
 	}
 
+	oldDomainName := proxy.domainName.Read()
+
 	if err := proxy.updateConfig(cfg); err != nil {
 		return err
 	}
@@ -245,6 +247,6 @@ func (gateway *Gateway) UpdateProxy(proxy *Proxy, cfg ProxyConfig) error {
 		return err
 	}
 
-	gate.RemoveProxy(proxy.domainName)
+	gate.RemoveProxy(oldDomainName)
 	return nil
 }

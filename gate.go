@@ -9,9 +9,11 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/viper"
 	"io"
+	"sync"
 )
 
 type Gate struct {
+	sync.Mutex
 	listenTo string
 	listener *mc.Listener
 	proxies  map[string]*Proxy // map key is domain name
@@ -82,21 +84,21 @@ func (gate *Gate) AddProxyByViper(vpr *viper.Viper) (*Proxy, error) {
 }
 
 func (gate *Gate) AddProxy(proxy *Proxy) error {
-	if gate.listenTo != proxy.listenTo {
+	if gate.listenTo != proxy.listenTo.Read() {
 		return ErrProxyNotSupported
 	}
 
-	if _, ok := gate.proxies[proxy.domainName]; ok {
+	if _, ok := gate.proxies[proxy.domainName.Read()]; ok {
 		return ErrProxySignatureAlreadyRegistered
 	}
 
 	proxy.AddLoggerOutput(io.MultiWriter(gate.loggerOutputs...))
 	proxy.overrideLogger(gate.logger)
-	gate.proxies[proxy.domainName] = proxy
+	gate.proxies[proxy.domainName.Read()] = proxy
 
 	gate.logger.Debug().
-		Str("destinationAddress", proxy.proxyTo).
-		Str("domainName", proxy.domainName).
+		Str("destinationAddress", proxy.proxyTo.Read()).
+		Str("domainName", proxy.domainName.Read()).
 		Msg("Added proxy to gate")
 
 	return nil
@@ -174,7 +176,9 @@ func (gate Gate) serve(conn mc.Conn) {
 	addr := handshake.ParseServerAddress()
 	addrWithPort := fmt.Sprintf("%s:%d", addr, handshake.ServerPort)
 	logger = logger.With().Str("requestedAddress", addrWithPort).Logger()
+	gate.Lock()
 	proxy, ok := gate.proxies[addr]
+	gate.Unlock()
 	if !ok {
 		logger.Info().Msg("Unknown address requested")
 		return
@@ -204,7 +208,7 @@ func (gate *Gate) onConfigChange(proxy *Proxy, vpr *viper.Viper) func(fsnotify.E
 			logger.Err(ErrProxyNotSupported).Msg("Automatically closing this proxy now")
 			vpr.OnConfigChange(nil)
 			proxy.Close()
-			gate.RemoveProxy(proxy.domainName)
+			gate.RemoveProxy(proxy.domainName.Read())
 			return
 		}
 
@@ -215,7 +219,7 @@ func (gate *Gate) onConfigChange(proxy *Proxy, vpr *viper.Viper) func(fsnotify.E
 }
 
 func (gate *Gate) UpdateProxy(proxy *Proxy, cfg ProxyConfig) error {
-	if cfg.DomainName == proxy.domainName {
+	if cfg.DomainName == proxy.domainName.Read() {
 		if err := proxy.updateConfig(cfg); err != nil {
 			return err
 		}
@@ -226,13 +230,13 @@ func (gate *Gate) UpdateProxy(proxy *Proxy, cfg ProxyConfig) error {
 		return ErrProxySignatureAlreadyRegistered
 	}
 
-	oldDomainName := proxy.domainName
+	oldDomainName := proxy.domainName.Read()
 
 	if err := proxy.updateConfig(cfg); err != nil {
 		return err
 	}
 
-	gate.proxies[proxy.domainName] = proxy
+	gate.proxies[proxy.domainName.Read()] = proxy
 	delete(gate.proxies, oldDomainName)
 	return nil
 }
