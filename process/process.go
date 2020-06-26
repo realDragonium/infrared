@@ -4,7 +4,7 @@ import (
 	"time"
 )
 
-const contextTimeout = 10 * time.Second
+const contextTimeout = 5 * time.Second
 
 // Process is an arbitrary process that can be started or stopped
 type Process interface {
@@ -14,15 +14,26 @@ type Process interface {
 }
 
 func New(cfg Config) (Process, error) {
-	if cfg.hasPortainerConfig() {
-		return NewPortainer(
-				cfg.ContainerName,
-				cfg.Portainer.Address,
-				cfg.Portainer.EndpointID,
-				cfg.Portainer.Username,
-				cfg.Portainer.Password,
-			)
+	if cfg.hasSystemConfig() {
+		return NewLocal(
+			cfg.System.Directory,
+			cfg.System.StartCommand,
+			cfg.System.StopCommand,
+		)
 	}
 
-	return NewDocker(cfg.ContainerName)
+	if cfg.hasPortainerConfig() {
+		return NewPortainer(
+			cfg.Docker.ContainerName,
+			cfg.Docker.Address,
+			cfg.Docker.Portainer.EndpointID,
+			cfg.Docker.Portainer.Username,
+			cfg.Docker.Portainer.Password,
+		)
+	}
+
+	return NewDocker(
+		cfg.Docker.Address,
+		cfg.Docker.ContainerName,
+	)
 }
