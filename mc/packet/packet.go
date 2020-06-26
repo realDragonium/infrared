@@ -3,8 +3,9 @@ package packet
 import (
 	"bytes"
 	"fmt"
-	"github.com/klauspost/compress/zlib"
+	"github.com/haveachin/infrared/mc/zlib"
 	"io"
+	"time"
 )
 
 // Packet define a net data package
@@ -49,7 +50,7 @@ func (p *Packet) Pack(threshold int) []byte {
 	data := []byte{p.ID}
 	data = append(data, p.Data...)
 
-	if threshold >= 0 {
+	if threshold > 0 {
 		if len(data) > threshold {
 			length := VarInt(len(data)).Encode()
 			data = Compress(data)
@@ -85,14 +86,40 @@ func ReadRaw(r DecodeReader) ([]byte, error) {
 	return data, nil
 }
 
+func StreamRead(r DecodeReader, zlib bool, out chan Packet) error {
+	if zlib {
+		for {
+			data, err := ReadRaw(r)
+			if err != nil {
+				return err
+			}
+			go func() {
+				packet, err := Decompress(data)
+				if err != nil {
+					return
+				}
+				out <- packet
+			}()
+		}
+	} else {
+		for {
+			data, err := ReadRaw(r)
+			if err != nil {
+				return err
+			}
+			out <- Parse(data)
+		}
+	}
+}
+
 // RecvPacket receive a packet from server
-func Read(r DecodeReader, zlib bool) (Packet, error) {
+func Read(r DecodeReader, isZlib bool) (Packet, error) {
 	data, err := ReadRaw(r)
 	if err != nil {
 		return Packet{}, err
 	}
 
-	if zlib {
+	if isZlib {
 		return Decompress(data)
 	}
 
@@ -110,7 +137,7 @@ func Peek(p PeekReader, zlib bool) (Packet, error) {
 
 // Decompress 读取一个压缩的包
 func Decompress(data []byte) (Packet, error) {
-	reader := bytes.NewReader(data)
+	reader := bytes.NewBuffer(data)
 
 	var dataLength VarInt
 	if err := dataLength.Decode(reader); err != nil {
@@ -119,15 +146,20 @@ func Decompress(data []byte) (Packet, error) {
 
 	decompressedData := make([]byte, dataLength)
 	if dataLength != 0 { // != 0 means compressed, let's decompress
-		r, err := zlib.NewReader(reader)
+		/*r, err := zlib.NewReader(reader)
 		if err != nil {
-			return Packet{}, fmt.Errorf("decompress fail: %v", err)
+			return Packet{}, err
 		}
 		_, err = io.ReadFull(r, decompressedData)
 		if err != nil {
-			return Packet{}, fmt.Errorf("decompress fail: %v", err)
+			return Packet{}, err
 		}
 		if err := r.Close(); err != nil {
+			return Packet{}, err
+		}*/
+		var err error
+		decompressedData, err = zlib.Decode(reader.Bytes())
+		if err != nil {
 			return Packet{}, err
 		}
 	} else {
@@ -139,9 +171,22 @@ func Decompress(data []byte) (Packet, error) {
 
 // Compress 压缩数据
 func Compress(data []byte) []byte {
-	var b bytes.Buffer
-	w, _ := zlib.NewWriterLevel(&b, zlib.BestSpeed)
-	w.Write(data)
-	w.Close()
-	return b.Bytes()
+	/*var b bytes.Buffer
+	w := zlib.NewWriter(&b)
+	now := time.Now()
+	_, err := w.Write(data)
+	if err != nil {
+		fmt.Println(err)
+	}
+	_ = w.Close()
+	fmt.Println("Time:", time.Now().Sub(now),"Before:", len(data), "After:", len(b.Bytes()))
+	return b.Bytes()*/
+	now := time.Now()
+	data2, err := zlib.Encode(data)
+	if err != nil {
+		fmt.Println(err)
+		return nil
+	}
+	fmt.Println("Time:", time.Now().Sub(now), "Before:", len(data), "After:", len(data2))
+	return data2
 }

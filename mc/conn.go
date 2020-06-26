@@ -83,12 +83,12 @@ func (c *Conn) Write(b []byte) (int, error) {
 
 // ReadPacket read a Packet from Conn.
 func (c *Conn) ReadPacket() (pk.Packet, error) {
-	return pk.Read(c.r, c.Threshold >= 0)
+	return pk.Read(c.r, c.Threshold > 0)
 }
 
 // PeekPacket peeks a Packet from Conn.
 func (c *Conn) PeekPacket() (pk.Packet, error) {
-	return pk.Peek(c.r, c.Threshold >= 0)
+	return pk.Peek(c.r, c.Threshold > 0)
 }
 
 //WritePacket write a Packet to Conn.

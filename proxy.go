@@ -2,7 +2,7 @@ package infrared
 
 import (
 	"github.com/haveachin/infrared/callback"
-	pk "github.com/haveachin/infrared/mc/packet"
+	"github.com/haveachin/infrared/mc/zlib"
 	"github.com/haveachin/infrared/mots"
 	"github.com/haveachin/infrared/safe"
 	"github.com/rs/zerolog"
@@ -24,15 +24,15 @@ type Proxy struct {
 	// Modifier modifies traffic that is send between the client and the server
 	Modifier []mots.InterceptFunc
 
-	domainName    string
-	listenTo      string
-	proxyTo       string
-	timeout       time.Duration
+	domainName    safe.String
+	listenTo      safe.String
+	proxyTo       safe.String
+	timeout       safe.Duration
 	cancelTimeout func()
 	Players       safe.Players
 
-	server    sim.Server
-	process   process.Process
+	server    safe.Server
+	Process   safe.Process
 	logWriter *callback.LogWriter
 
 	logger        zerolog.Logger
@@ -43,10 +43,16 @@ type Proxy struct {
 func NewProxy(cfg ProxyConfig) (*Proxy, error) {
 	logWriter := &callback.LogWriter{}
 
+	server, err := sim.NewServer(cfg.Server)
+	if err != nil {
+		return nil, err
+	}
+
 	proxy := Proxy{
 		Modifier:      []mots.InterceptFunc{},
 		Players:       *safe.NewPlayers(),
 		cancelTimeout: nil,
+		server:        safe.Server{Value: *server},
 		logWriter:     logWriter,
 		loggerOutputs: []io.Writer{logWriter},
 	}
@@ -67,8 +73,8 @@ func (proxy *Proxy) AddLoggerOutput(w io.Writer) {
 
 func (proxy *Proxy) overrideLogger(logger zerolog.Logger) zerolog.Logger {
 	proxy.logger = logger.With().
-		Str("destinationAddress", proxy.proxyTo).
-		Str("domainName", proxy.domainName).Logger().
+		Str("destinationAddress", proxy.proxyTo.Read()).
+		Str("domainName", proxy.domainName.Read()).Logger().
 		Output(io.MultiWriter(proxy.loggerOutputs...))
 
 	return proxy.logger
@@ -91,14 +97,14 @@ func (proxy *Proxy) HandleConn(conn mc.Conn) error {
 		return err
 	}
 
-	rconn, err := mc.DialTimeout(proxy.proxyTo, time.Millisecond*500)
+	rconn, err := mc.DialTimeout(proxy.proxyTo.Read(), time.Millisecond*500)
 	if err != nil {
 		defer conn.Close()
 		if handshake.IsStatusRequest() {
 			return proxy.server.HandleConn(conn)
 		}
 
-		isProcessRunning, err := proxy.process.IsRunning()
+		isProcessRunning, err := proxy.Process.IsRunning()
 		if err != nil {
 			logger.Err(err).Interface(callback.EventKey, callback.ErrorEvent).Msg("Could not determine if the container is running")
 			return proxy.server.HandleConn(conn)
@@ -109,7 +115,7 @@ func (proxy *Proxy) HandleConn(conn mc.Conn) error {
 		}
 
 		logger.Info().Interface(callback.EventKey, callback.ContainerStartEvent).Msg("Starting container")
-		if err := proxy.process.Start(); err != nil {
+		if err := proxy.Process.Start(); err != nil {
 			logger.Err(err).Interface(callback.EventKey, callback.ErrorEvent).Msg("Could not start the container")
 			return proxy.server.HandleConn(conn)
 		}
@@ -122,7 +128,7 @@ func (proxy *Proxy) HandleConn(conn mc.Conn) error {
 	if handshake.IsLoginRequest() {
 		state.Value = protocol.StateLogin
 
-		username, err := proxy.server.SniffUsername(conn, rconn)
+		username, err := sim.SniffUsername(conn, rconn)
 		if err != nil {
 			return err
 		}
@@ -141,19 +147,19 @@ func (proxy *Proxy) HandleConn(conn mc.Conn) error {
 			}
 		}()
 
-		if err := proxy.server.SetEncryption(&conn); err != nil {
+		/*if err := proxy.server.SetEncryption(&conn); err != nil {
 			return err
 		}
 
-		logger.Debug().Msg("Encryption successful")
+		logger.Debug().Msg("Encryption successful")*/
 
 		//threshold := 256
-		/*threshold, err := proxy.server.SetThreshold(&conn, &rconn)
+		threshold, err := proxy.server.SetThreshold(&conn, &rconn)
 		if err != nil {
 			return err
 		}
 
-		logger.Debug().Msgf("Threshold set to %d", threshold)*/
+		logger.Debug().Msgf("Threshold set to %d", threshold)
 
 		state.Value = protocol.StatePlay
 	}
@@ -163,49 +169,11 @@ func (proxy *Proxy) HandleConn(conn mc.Conn) error {
 	var pipe = func(src, dst *mc.Conn, modifiers ...mots.InterceptFunc) {
 		defer wg.Done()
 
-		modifiers = append(modifiers, proxy.Modifier...)
-
-		author := mots.AuthorClient
-		if *src == rconn {
-			author = mots.AuthorServer
-		}
-
-		//buf := make([]byte, 0xffff)
-		buffer := safe.NewBuffer([]byte{})
-
-		go func() {
-			for {
-				packet, err := pk.Read(buffer, src.Threshold >= 0)
-				if err != nil {
-					return
-				}
-
-				msg := mots.Message{
-					State:  state.Read(),
-					Packet: packet,
-					Author: author,
-					Dst:    dst,
-				}
-
-				for _, modifier := range modifiers {
-					if modifier == nil {
-						continue
-					}
-
-					modifier(&msg)
-				}
-			}
-		}()
-
 		for {
 			packet, err := src.ReadPacket()
 			if err != nil {
 				return
 			}
-
-			/*data := make([]byte, n)
-			copy(data, buf[:n])
-			go buffer.Write(data)*/
 
 			if err := dst.WritePacket(packet); err != nil {
 				return
@@ -225,6 +193,7 @@ func (proxy *Proxy) HandleConn(conn mc.Conn) error {
 
 	conn.Close()
 	rconn.Close()
+	zlib.WriteJSON()
 
 	return nil
 }
@@ -232,7 +201,7 @@ func (proxy *Proxy) HandleConn(conn mc.Conn) error {
 // updateConfig is a callback function that handles config changes
 func (proxy *Proxy) updateConfig(cfg ProxyConfig) error {
 	if cfg.ProxyTo == "" {
-		ip, err := net.ResolveIPAddr(cfg.Docker.DNSServer, cfg.Docker.ContainerName)
+		ip, err := net.ResolveIPAddr(cfg.Process.Docker.DNSServer, cfg.Process.Docker.ContainerName)
 		if err != nil {
 			return err
 		}
@@ -245,13 +214,13 @@ func (proxy *Proxy) updateConfig(cfg ProxyConfig) error {
 		return err
 	}
 
-	proc, err := process.New(cfg.Docker)
+	proc, err := process.New(cfg.Process)
 	if err != nil {
 		return err
 	}
 
-	server, err := sim.NewServer(cfg.Server)
-	if err != nil {
+	server := proxy.server.Read()
+	if err := server.UpdateConfig(cfg.Server); err != nil {
 		return err
 	}
 
@@ -263,12 +232,12 @@ func (proxy *Proxy) updateConfig(cfg ProxyConfig) error {
 	proxy.logWriter.URL = logWriter.URL
 	proxy.logWriter.Events = logWriter.Events
 
-	proxy.domainName = cfg.DomainName
-	proxy.listenTo = cfg.ListenTo
-	proxy.proxyTo = cfg.ProxyTo
-	proxy.timeout = timeout
-	proxy.process = proc
-	proxy.server = *server
+	proxy.domainName.Write(cfg.DomainName)
+	proxy.listenTo.Write(cfg.ListenTo)
+	proxy.proxyTo.Write(cfg.ProxyTo)
+	proxy.timeout.Write(timeout)
+	proxy.Process.Update(proc)
+	proxy.server.Update(server)
 
 	return nil
 }
@@ -278,10 +247,14 @@ func (proxy *Proxy) startTimeout() {
 		proxy.stopTimeout()
 	}
 
-	timer := time.AfterFunc(proxy.timeout, func() {
-		proxy.logger.Info().Interface(callback.EventKey, callback.ContainerStopEvent).Msgf("Stopping container")
-		if err := proxy.process.Stop(); err != nil {
-			proxy.logger.Err(err).Interface(callback.EventKey, callback.ErrorEvent).Msg("Failed to stop the container")
+	timer := time.AfterFunc(proxy.timeout.Read(), func() {
+		proxy.logger.Info().
+			Interface(callback.EventKey, callback.ContainerStopEvent).
+			Msgf("Stopping container")
+		if err := proxy.Process.Stop(); err != nil {
+			proxy.logger.Err(err).
+				Interface(callback.EventKey, callback.ErrorEvent).
+				Msg("Failed to stop the container")
 		}
 	})
 
@@ -290,7 +263,9 @@ func (proxy *Proxy) startTimeout() {
 		proxy.logger.Debug().Msg("Timeout canceled")
 	}
 
-	proxy.logger.Info().Interface(callback.EventKey, callback.ContainerTimeoutEvent).Msgf("Timing out in %s", proxy.timeout)
+	proxy.logger.Info().
+		Interface(callback.EventKey, callback.ContainerTimeoutEvent).
+		Msgf("Timing out in %s", proxy.timeout.Read())
 }
 
 func (proxy *Proxy) stopTimeout() {
