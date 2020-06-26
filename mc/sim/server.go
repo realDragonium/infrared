@@ -115,35 +115,6 @@ func (server Server) respondToLoginRequest(conn mc.Conn) error {
 	return conn.WritePacket(disconnect.Marshal())
 }
 
-func (server *Server) SniffUsername(conn, rconn mc.Conn) (string, error) {
-	// Handshake
-	packet, err := conn.ReadPacket()
-	if err != nil {
-		return "", err
-	}
-
-	if err := rconn.WritePacket(packet); err != nil {
-		return "", err
-	}
-
-	// Login
-	packet, err = conn.ReadPacket()
-	if err != nil {
-		return "", err
-	}
-
-	loginStartPacket, err := protocol.ParseClientLoginStart(packet)
-	if err != nil {
-		return "", err
-	}
-
-	if err := rconn.WritePacket(packet); err != nil {
-		return "", err
-	}
-
-	return string(loginStartPacket.Name), nil
-}
-
 func (server *Server) SetEncryption(conn *mc.Conn) error {
 	verifyToken := make([]byte, verifyTokenLength)
 	if _, err := rand.Read(verifyToken); err != nil {
@@ -190,8 +161,8 @@ func (server *Server) SetEncryption(conn *mc.Conn) error {
 	}
 
 	conn.SetCipher(
-		cfb8.NewCFB8Encrypter(block, sharedSecret),
-		cfb8.NewCFB8Decrypter(block, sharedSecret),
+		cfb8.NewEncrypter(block, sharedSecret),
+		cfb8.NewDecrypter(block, sharedSecret),
 	)
 
 	return nil
@@ -284,4 +255,33 @@ func (server *Server) UpdateConfig(cfg ServerConfig) error {
 	server.disconnectMessage = cfg.DisconnectMessage
 
 	return nil
+}
+
+func SniffUsername(conn, rconn mc.Conn) (string, error) {
+	// Handshake
+	packet, err := conn.ReadPacket()
+	if err != nil {
+		return "", err
+	}
+
+	if err := rconn.WritePacket(packet); err != nil {
+		return "", err
+	}
+
+	// Login
+	packet, err = conn.ReadPacket()
+	if err != nil {
+		return "", err
+	}
+
+	loginStartPacket, err := protocol.ParseClientLoginStart(packet)
+	if err != nil {
+		return "", err
+	}
+
+	if err := rconn.WritePacket(packet); err != nil {
+		return "", err
+	}
+
+	return string(loginStartPacket.Name), nil
 }
