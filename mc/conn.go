@@ -69,7 +69,7 @@ func WrapConn(conn net.Conn) Conn {
 		Conn:      conn,
 		r:         bufio.NewReader(conn),
 		w:         conn,
-		Threshold: -1,
+		Threshold: 0,
 	}
 }
 
@@ -93,7 +93,11 @@ func (c *Conn) PeekPacket() (pk.Packet, error) {
 
 //WritePacket write a Packet to Conn.
 func (c *Conn) WritePacket(p pk.Packet) error {
-	_, err := c.w.Write(p.Pack(c.Threshold))
+	packet, err := p.Pack(c.Threshold)
+	if err != nil {
+		return err
+	}
+	_, err = c.w.Write(packet)
 	return err
 }
 

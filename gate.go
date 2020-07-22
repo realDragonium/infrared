@@ -163,7 +163,7 @@ func (gate Gate) serve(conn mc.Conn) {
 		return
 	}
 
-	handshake, err := protocol.ParseSLPHandshake(packet)
+	handshake, err := protocol.ParseHandshakingServerBoundHandshake(packet)
 	if err != nil {
 		logger.Debug().Err(err).Msg("Handshake parsing failed")
 		return

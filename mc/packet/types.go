@@ -69,7 +69,7 @@ type (
 	}
 
 	//Angle is rotation angle in steps of 1/256 of a full turn
-	Angle int8
+	Angle = UnsignedByte
 
 	//UUID encoded as an unsigned 128-bit integer
 	UUID uuid.UUID

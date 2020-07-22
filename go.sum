@@ -17,6 +17,8 @@ github.com/4kills/zlib v0.0.0-20200623211146-f7479edb908e h1:D4xRs2rEkbTsfm+rGbC
 github.com/4kills/zlib v0.0.0-20200623211146-f7479edb908e/go.mod h1:a/mrKa5E8zAl3vizDkiHDPPny9iX7WI8VTC4aE0Y/js=
 github.com/4kills/zlib v0.0.0-20200623234237-2a60e9588fcf h1:Q5TSqgba5pnTpff+8x9Wp74hMHOozfiOsVuNv5dt1GQ=
 github.com/4kills/zlib v0.0.0-20200623234237-2a60e9588fcf/go.mod h1:a/mrKa5E8zAl3vizDkiHDPPny9iX7WI8VTC4aE0Y/js=
+github.com/4kills/zlib v1.0.2 h1:5Y6m1GlVst3MMqSBcsfS+4Ob/f9xfbz9YrOeroH6kW0=
+github.com/4kills/zlib v1.0.2/go.mod h1:uYu3WSof8ewWyCfIQOJCFU8SoHNjYhzLfHw4R9rC2ow=
 github.com/Azure/go-ansiterm v0.0.0-20170929234023-d6e3b3328b78 h1:w+iIsaOQNcT7OZ575w+acHgRric5iCyQh+xv+KJ4HB8=
 github.com/Azure/go-ansiterm v0.0.0-20170929234023-d6e3b3328b78/go.mod h1:LmzpDX56iTiv29bbRTIsUNlaFfuhWRQBWjQdVyAevI8=
 github.com/BurntSushi/toml v0.3.1 h1:WXkYYl6Yr3qBf1K79EBnL4mak0OimBfB0XUf9Vl28OQ=

@@ -6,30 +6,26 @@ import (
 )
 
 const (
-	SLPHandshakePacketID byte = 0x00
-	SLPRequestPacketID   byte = 0x00
-	SLPResponsePacketID  byte = 0x00
-	SLPPingPacketID      byte = 0x01
-	SLPPongPacketID      byte = 0x01
+	HandshakingServerBoundHandshakePacketID byte = 0x00
 
-	SLPHandshakeStatusState = pk.Byte(1)
-	SLPHandshakeLoginState  = pk.Byte(2)
+	HandshakingServerBoundHandshakeStatusState = pk.Byte(1)
+	HandshakingServerBoundHandshakeLoginState  = pk.Byte(2)
 
 	ForgeAddressSuffix  = "\x00FML\x00"
 	Forge2AddressSuffix = "\x00FML2\x00"
 )
 
-type SLPHandshake struct {
+type HandshakingServerBoundHandshake struct {
 	ProtocolVersion pk.VarInt
 	ServerAddress   pk.String
 	ServerPort      pk.UnsignedShort
 	NextState       pk.Byte
 }
 
-func ParseSLPHandshake(packet pk.Packet) (SLPHandshake, error) {
-	var handshake SLPHandshake
+func ParseHandshakingServerBoundHandshake(packet pk.Packet) (HandshakingServerBoundHandshake, error) {
+	var handshake HandshakingServerBoundHandshake
 
-	if packet.ID != SLPHandshakePacketID {
+	if packet.ID != HandshakingServerBoundHandshakePacketID {
 		return handshake, ErrInvalidPacketID
 	}
 
@@ -44,24 +40,24 @@ func ParseSLPHandshake(packet pk.Packet) (SLPHandshake, error) {
 	return handshake, nil
 }
 
-func (handshake SLPHandshake) Marshal() pk.Packet {
+func (handshake HandshakingServerBoundHandshake) Marshal() pk.Packet {
 	return pk.Marshal(
-		SLPHandshakePacketID,
+		HandshakingServerBoundHandshakePacketID,
 		handshake.ProtocolVersion,
 		handshake.ServerAddress,
 		handshake.ServerPort,
 		handshake.NextState)
 }
 
-func (handshake SLPHandshake) IsStatusRequest() bool {
-	return handshake.NextState == SLPHandshakeStatusState
+func (handshake HandshakingServerBoundHandshake) IsStatusRequest() bool {
+	return handshake.NextState == HandshakingServerBoundHandshakeStatusState
 }
 
-func (handshake SLPHandshake) IsLoginRequest() bool {
-	return handshake.NextState == SLPHandshakeLoginState
+func (handshake HandshakingServerBoundHandshake) IsLoginRequest() bool {
+	return handshake.NextState == HandshakingServerBoundHandshakeLoginState
 }
 
-func (handshake SLPHandshake) IsForgeAddress() bool {
+func (handshake HandshakingServerBoundHandshake) IsForgeAddress() bool {
 	addr := string(handshake.ServerAddress)
 
 	if strings.HasSuffix(addr, ForgeAddressSuffix) {
@@ -75,18 +71,10 @@ func (handshake SLPHandshake) IsForgeAddress() bool {
 	return false
 }
 
-func (handshake SLPHandshake) ParseServerAddress() string {
+func (handshake HandshakingServerBoundHandshake) ParseServerAddress() string {
 	addr := string(handshake.ServerAddress)
 	addr = strings.TrimSuffix(addr, ForgeAddressSuffix)
 	addr = strings.TrimSuffix(addr, Forge2AddressSuffix)
 	addr = strings.Trim(addr, ".")
 	return addr
-}
-
-type SLPResponse struct {
-	JSONResponse pk.String
-}
-
-func (packet SLPResponse) Marshal() pk.Packet {
-	return pk.Marshal(SLPResponsePacketID, packet.JSONResponse)
 }

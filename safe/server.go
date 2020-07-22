@@ -41,8 +41,8 @@ func (safe *Server) SetThreshold(conn, rconn *mc.Conn) (int, error) {
 	return safe.Value.SetThreshold(conn, rconn)
 }
 
-func (safe *Server) SetEncryption(conn *mc.Conn) error {
+func (safe *Server) SetEncryption(conn *mc.Conn, player *mc.Player) error {
 	safe.Lock()
 	defer safe.Unlock()
-	return safe.Value.SetEncryption(conn)
+	return safe.Value.SetEncryption(conn, player)
 }

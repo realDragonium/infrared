@@ -2,7 +2,6 @@ package infrared
 
 import (
 	"github.com/haveachin/infrared/callback"
-	"github.com/haveachin/infrared/mc/zlib"
 	"github.com/haveachin/infrared/mots"
 	"github.com/haveachin/infrared/safe"
 	"github.com/rs/zerolog"
@@ -92,7 +91,7 @@ func (proxy *Proxy) HandleConn(conn mc.Conn) error {
 		return err
 	}
 
-	handshake, err := protocol.ParseSLPHandshake(packet)
+	handshake, err := protocol.ParseHandshakingServerBoundHandshake(packet)
 	if err != nil {
 		return err
 	}
@@ -134,7 +133,7 @@ func (proxy *Proxy) HandleConn(conn mc.Conn) error {
 		}
 
 		proxy.stopTimeout()
-		proxy.Players.Put(&conn, username)
+		proxy.Players.Put(&conn, mc.Player{Username: username})
 		logger = logger.With().Str("username", username).Logger()
 		logger.Info().Interface(callback.EventKey, callback.PlayerJoinEvent).Msgf("%s joined the game", username)
 
@@ -147,11 +146,12 @@ func (proxy *Proxy) HandleConn(conn mc.Conn) error {
 			}
 		}()
 
-		/*if err := proxy.server.SetEncryption(&conn); err != nil {
+		player := proxy.Players.Get(&conn)
+		if err := proxy.server.SetEncryption(&conn, &player); err != nil {
 			return err
 		}
 
-		logger.Debug().Msg("Encryption successful")*/
+		logger.Debug().Msg("Encryption successful")
 
 		//threshold := 256
 		threshold, err := proxy.server.SetThreshold(&conn, &rconn)
@@ -161,6 +161,25 @@ func (proxy *Proxy) HandleConn(conn mc.Conn) error {
 
 		logger.Debug().Msgf("Threshold set to %d", threshold)
 
+		// Send LoginSuccess
+		packet, err = rconn.ReadPacket()
+		if err != nil {
+			return err
+		}
+
+		loginSuccess, err := protocol.ParseServerLoginLoginSuccess(packet)
+		if err != nil {
+			return err
+		}
+
+		player.OfflineUUID = loginSuccess.UUID
+		proxy.Players.Put(&conn, player)
+		loginSuccess.UUID = player.UUID
+
+		if err := conn.WritePacket(loginSuccess.Marshal()); err != nil {
+			return err
+		}
+
 		state.Value = protocol.StatePlay
 	}
 
@@ -169,21 +188,44 @@ func (proxy *Proxy) HandleConn(conn mc.Conn) error {
 	var pipe = func(src, dst *mc.Conn, modifiers ...mots.InterceptFunc) {
 		defer wg.Done()
 
+		author := mots.AuthorServer
+		if src == &conn {
+			author = mots.AuthorClient
+		}
+
 		for {
 			packet, err := src.ReadPacket()
 			if err != nil {
 				return
 			}
 
-			if err := dst.WritePacket(packet); err != nil {
+			msg := mots.Message{
+				State:  protocol.StatePlay,
+				Author: author,
+				Packet: packet,
+				Src:    src,
+				Dst:    dst,
+				Cancel: false,
+			}
+
+			for _, modifier := range modifiers {
+				modifier(&msg)
+			}
+
+			if msg.Cancel {
+				continue
+			}
+
+			if err := dst.WritePacket(msg.Packet); err != nil {
 				return
 			}
 		}
 	}
 
 	var modifiers = []mots.InterceptFunc{
-		//mitm.OmnidirectionalLogger,
-		//mitm.BidirectionalStateUpdate(&state),
+		mots.PlayerInfoSkinMiddleware(&proxy.Players),
+		mots.SpawnPlayerSkinMiddleware(&proxy.Players),
+		mots.ChatMessageCommandMiddleware,
 	}
 
 	wg.Add(2)
@@ -193,7 +235,6 @@ func (proxy *Proxy) HandleConn(conn mc.Conn) error {
 
 	conn.Close()
 	rconn.Close()
-	zlib.WriteJSON()
 
 	return nil
 }

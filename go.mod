@@ -3,7 +3,7 @@ module github.com/haveachin/infrared
 go 1.14
 
 require (
-	github.com/4kills/zlib v0.0.0-20200623234237-2a60e9588fcf
+	github.com/4kills/zlib v1.0.2
 	github.com/Azure/go-ansiterm v0.0.0-20170929234023-d6e3b3328b78 // indirect
 	github.com/Microsoft/go-winio v0.4.14 // indirect
 	github.com/Tnze/go-mc v1.15.1
