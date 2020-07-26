@@ -14,4 +14,8 @@
 # Config files
 *.yaml
 
-cmd/infrared/configs
+# Infrared test configs for debuging localy
+/cmd/infrared/configs
+
+# Infrared binary on linux - this IS A FILE not a folder
+/cmd/infrared/infrared
