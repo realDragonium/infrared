@@ -1,17 +1,19 @@
 # Infrared
 
-An ultra lightweight Minecraft reverse proxy and idle placeholder:
+An ultra lightweight and very powerful Minecraft reverse proxy and idle placeholder:
 Ever wanted to have only one exposed port at your server for multiple Minecraft servers?
-Then infrared is the tool you need!
+Then Infrared is the tool you need!
 Infrared works as a reverse proxy using a subdomains to connect clients to a specific Minecraft server.
+It is important to note that Infrared relies on Docker for a full feature set.
 
 ## Features
 
-- [x] Reverse Proxy
-- [x] Display Placeholder Server
-- [x] Autostart Server when pinged
-- [x] Logger/Event Callback URLs
-- [ ] REST API with JSON as data format
+- [x] Standalone reverse proxy for Minecraft server
+- [x] Send configurable server info
+- [x] Stops Minecraft Server when not in use
+- [x] Autostart Minecraft Server when pinged
+- [x] Event logger that sends realtime logs to configurable URL
+- [ ] REST API for consuming realtime data
 
 ## Deploy
 
