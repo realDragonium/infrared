@@ -9,9 +9,45 @@ import (
 	"syscall"
 )
 
+type SystemConfig struct {
+	Directory    string
+	StartCommand string
+	StopCommand  string
+}
+
+func (cfg SystemConfig) Validate() error {
+	if cfg.StartCommand == "" {
+		return errors.New("config system: 'StartCommand' not set")
+	}
+
+	return nil
+}
+
 type system struct {
 	startCmd *exec.Cmd
 	stopCmd  *exec.Cmd
+}
+
+func NewSystem(cfg SystemConfig) (Process, error) {
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+
+	startCmd := parseCommand(cfg.StartCommand)
+	if startCmd == nil {
+		return nil, errors.New("no startCommand script defined")
+	}
+	startCmd.Dir = cfg.Directory
+
+	stopCmd := parseCommand(cfg.StopCommand)
+	if stopCmd != nil {
+		stopCmd.Dir = cfg.Directory
+	}
+
+	return &system{
+		startCmd: startCmd,
+		stopCmd:  stopCmd,
+	}, nil
 }
 
 func parseCommand(cmd string) *exec.Cmd {
@@ -26,24 +62,6 @@ func parseCommand(cmd string) *exec.Cmd {
 	}
 
 	return exec.Command(cmd)
-}
-
-func NewLocal(directory string, startCommand string, stopCommand string) (Process, error) {
-	startCmd := parseCommand(startCommand)
-	if startCmd == nil {
-		return nil, errors.New("no startCommand script defined")
-	}
-	startCmd.Dir = directory
-
-	stopCmd := parseCommand(stopCommand)
-	if stopCmd != nil {
-		stopCmd.Dir = directory
-	}
-
-	return &system{
-		startCmd: startCmd,
-		stopCmd:  stopCmd,
-	}, nil
 }
 
 func (sys *system) Start() error {

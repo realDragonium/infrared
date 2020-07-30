@@ -1,11 +1,30 @@
 package process
 
 import (
+	"errors"
 	"fmt"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/client"
 	"golang.org/x/net/context"
+	"time"
 )
+
+const contextTimeout = 5 * time.Second
+
+type DockerConfig struct {
+	Address       string
+	DNSServer     string
+	ContainerName string
+	Hibernate     bool
+}
+
+func (cfg DockerConfig) Validate() error {
+	if cfg.ContainerName == "" {
+		return errors.New("config docker: 'ContainerName' not set")
+	}
+
+	return nil
+}
 
 type docker struct {
 	client        *client.Client
@@ -13,15 +32,19 @@ type docker struct {
 }
 
 // NewDocker create a new docker process that manages a container
-func NewDocker(address, containerName string) (Process, error) {
+func NewDocker(cfg DockerConfig) (Process, error) {
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+
 	var cli *client.Client
 	var err error
 
-	if address == "" {
+	if cfg.Address == "" {
 		cli, err = client.NewClientWithOpts(client.FromEnv)
 	} else {
 		cli, err = client.NewClientWithOpts(
-			client.WithHost(address),
+			client.WithHost(cfg.Address),
 			client.WithAPIVersionNegotiation(),
 		)
 	}
@@ -32,7 +55,7 @@ func NewDocker(address, containerName string) (Process, error) {
 
 	return docker{
 		client:        cli,
-		containerName: containerName,
+		containerName: cfg.ContainerName,
 	}, nil
 }
 

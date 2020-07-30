@@ -17,6 +17,28 @@ const (
 	dockerEndpoint         = "tcp://%s/api/endpoints/%s/docker"
 )
 
+type PortainerConfig struct {
+	EndpointID string
+	Username   string
+	Password   string
+}
+
+func (cfg PortainerConfig) Validate() error {
+	if cfg.EndpointID == "" {
+		return errors.New("config potainer: 'EndpointID' not set")
+	}
+
+	if cfg.Username == "" {
+		return errors.New("config potainer: 'Username' not set")
+	}
+
+	if cfg.Password == "" {
+		return errors.New("config potainer: 'Password' not set")
+	}
+
+	return nil
+}
+
 type portainer struct {
 	docker   docker
 	address  string
@@ -26,8 +48,16 @@ type portainer struct {
 }
 
 // NewPortainer creates a new portainer process that manages a docker container
-func NewPortainer(containerName, address, endpointID, username, password string) (Process, error) {
-	baseURL := fmt.Sprintf(dockerEndpoint, address, endpointID)
+func NewPortainer(cfgDocker DockerConfig, cfgPortainer PortainerConfig) (Process, error) {
+	if err := cfgDocker.Validate(); err != nil {
+		return nil, err
+	}
+
+	if err := cfgPortainer.Validate(); err != nil {
+		return nil, err
+	}
+
+	baseURL := fmt.Sprintf(dockerEndpoint, cfgDocker.Address, cfgPortainer.EndpointID)
 	header := map[string]string{}
 	cli, err := client.NewClientWithOpts(
 		client.WithHost(baseURL),
@@ -42,11 +72,11 @@ func NewPortainer(containerName, address, endpointID, username, password string)
 	return portainer{
 		docker: docker{
 			client:        cli,
-			containerName: "/" + containerName,
+			containerName: "/" + cfgDocker.ContainerName,
 		},
-		address:  address,
-		username: username,
-		password: password,
+		address:  cfgDocker.Address,
+		username: cfgPortainer.Username,
+		password: cfgPortainer.Password,
 		header:   header,
 	}, nil
 }
