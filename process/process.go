@@ -14,7 +14,9 @@ type Config struct {
 }
 
 func New(cfg Config) (Process, error) {
-	if err := cfg.Docker.Validate(); err == nil {
+	err := cfg.Docker.Validate()
+
+	if err == nil {
 		if err := cfg.Portainer.Validate(); err == nil {
 			return NewPortainer(cfg.Docker, cfg.Portainer)
 		}
@@ -22,5 +24,5 @@ func New(cfg Config) (Process, error) {
 		return NewDocker(cfg.Docker)
 	}
 
-	return NewSystem(cfg.System)
+	return nil, err
 }
