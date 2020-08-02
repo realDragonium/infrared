@@ -64,9 +64,12 @@ All config options are below, but only the marked* fields are essential for a va
 `ProxyTo`* is the address that the proxy sends the incoming connections to  
 `Timeout` is the duration before it will be shut down [default: `5m`]  
 
-`Docker`* is a data object that represents a docker interface
-- `DNSServer` is the address of the DNS that resolves container names [default: `"127.0.0.11"`]
-- `ContainerName`* is the Name of the container that contains the Minecraft server
+`Process`
+- `Docker` is a data object that represents a docker interface
+  - `Address` is the address to the API of your docker daemon (only relevant if you )
+  - `DNSServer` is the address of the DNS that resolves container names [default: `"127.0.0.11"`]
+  - `ContainerName`* is the Name of the container that contains the Minecraft server
+  - `Hibernate` determinants if the container should shutdown or just be paused and kept in RAM
 - `Portainer` is a data object that represents a Portainer interface that is only needed
 if you are using [Portainer](https://www.portainer.io/) for user privilege management
   - `Address`* is the address of the Portainer instance
